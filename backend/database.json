@@ -1,0 +1,237 @@
+{
+  "patients": [
+    {
+      "id": "PT-10245",
+      "name": "Ravi Kumar",
+      "age": 34,
+      "blood_group": "O+",
+      "fingerprint_id": "FP-SIM-001",
+      "allergies": "[\"Penicillin\"]",
+      "conditions": "[\"Diabetes\"]",
+      "medications": "[\"Metformin 500mg\"]",
+      "surgeries": "[\"Appendectomy 2019\"]",
+      "emergency_contact": "9876543210",
+      "contact_name": "Anita Kumar",
+      "is_critical": 1,
+      "last_status": "Waiting",
+      "specialty": "General"
+    },
+    {
+      "id": "PT-10246",
+      "name": "Priya Sharma",
+      "age": 28,
+      "blood_group": "A+",
+      "fingerprint_id": "FP-SIM-002",
+      "allergies": "[\"None\"]",
+      "conditions": "[\"Asthma\"]",
+      "medications": "[\"Salbutamol Inhaler\"]",
+      "surgeries": "[\"None\"]",
+      "emergency_contact": "9876543211",
+      "contact_name": "Rohit Sharma",
+      "is_critical": 0,
+      "last_status": "Discharged",
+      "specialty": "General",
+      "discharge_notes": "she is cured and have better immune now"
+    },
+    {
+      "id": "PT-10247",
+      "name": "Arjun Mehta",
+      "age": 52,
+      "blood_group": "B-",
+      "fingerprint_id": "FP-SIM-003",
+      "allergies": "[\"Aspirin\"]",
+      "conditions": "[\"Heart Disease\"]",
+      "medications": "[\"Atorvastatin 10mg\"]",
+      "surgeries": "[\"Angioplasty 2021\"]",
+      "emergency_contact": "9876543212",
+      "contact_name": "Meena Mehta",
+      "is_critical": 1,
+      "last_status": "Waiting",
+      "specialty": "Cardiology"
+    },
+    {
+      "id": "PT-10248",
+      "name": "Sunita Rao",
+      "age": 41,
+      "blood_group": "AB+",
+      "fingerprint_id": "FP-SIM-004",
+      "allergies": "[\"Sulfa Drugs\"]",
+      "conditions": "[\"Hypertension\"]",
+      "medications": "[\"Amlodipine 5mg\"]",
+      "surgeries": "[\"None\"]",
+      "emergency_contact": "9876543213",
+      "contact_name": "Kiran Rao",
+      "is_critical": 0,
+      "last_status": "Waiting",
+      "specialty": "General"
+    },
+    {
+      "id": "PT-10249",
+      "name": "Vikram Das",
+      "age": 19,
+      "blood_group": "O-",
+      "fingerprint_id": "FP-SIM-005",
+      "allergies": "[\"None\"]",
+      "conditions": "[\"Hemophilia\"]",
+      "medications": "[\"Factor VIII\"]",
+      "surgeries": "[\"None\"]",
+      "emergency_contact": "9876543214",
+      "contact_name": "Suresh Das",
+      "is_critical": 1,
+      "last_status": "Waiting",
+      "specialty": "General"
+    }
+  ],
+  "doctors": [
+    {
+      "id": "DR-001",
+      "name": "Dr. Anil Kapoor",
+      "email": "doctor@lifekey.com",
+      "password": "demo123",
+      "dept": "ED"
+    },
+    {
+      "id": "DR-002",
+      "name": "Nurse Priya",
+      "email": "nurse@lifekey.com",
+      "password": "demo123",
+      "dept": "ED"
+    }
+  ],
+  "emergency_ids": [
+    {
+      "emergency_id": "EM-14004",
+      "status": "active",
+      "created_at": "2026-03-14T04:30:45.254Z"
+    },
+    {
+      "emergency_id": "EM-34970",
+      "status": "active",
+      "created_at": "2026-03-14T04:30:53.836Z"
+    },
+    {
+      "emergency_id": "EM-70871",
+      "status": "active",
+      "created_at": "2026-03-14T04:30:56.406Z"
+    },
+    {
+      "emergency_id": "EM-15676",
+      "status": "active",
+      "created_at": "2026-03-14T04:31:01.558Z"
+    },
+    {
+      "emergency_id": "EM-37880",
+      "status": "active",
+      "created_at": "2026-03-14T04:31:03.986Z"
+    },
+    {
+      "emergency_id": "EM-28019",
+      "status": "active",
+      "created_at": "2026-03-14T04:31:05.675Z"
+    }
+  ],
+  "active_admissions": [
+    {
+      "id": 1699999999000,
+      "patient_id": "PT-10245",
+      "admitted_at": "2024-03-14T01:00:00.000Z",
+      "status": "Under Treatment",
+      "doctor_id": "DR-001",
+      "is_archived": 0
+    },
+    {
+      "id": 1773462687383,
+      "patient_id": "PT-10246",
+      "status": "Under Treatment",
+      "admitted_at": "2026-03-14T04:31:27.383Z",
+      "is_archived": 0
+    },
+    {
+      "id": 1773462687916,
+      "patient_id": "PT-10246",
+      "status": "Under Treatment",
+      "admitted_at": "2026-03-14T04:31:27.916Z",
+      "is_archived": 0
+    },
+    {
+      "id": 1773462688094,
+      "patient_id": "PT-10246",
+      "status": "Under Treatment",
+      "admitted_at": "2026-03-14T04:31:28.094Z",
+      "is_archived": 0
+    }
+  ],
+  "notifications": [
+    {
+      "id": 1773462687407,
+      "patient_id": "PT-10246",
+      "sent_to": "9876543211",
+      "message": "LifeKey SMS Alert: Priya Sharma admitted to CityCare Medical Centre. Status: Stable. Assigned physician: Dr. Meenakshi Sundaram. Phone: 044-6666-5555. Map: https://maps.google.com/?q=CityCare+Medical+Centre,+Anna+Nagar,+Chennai",
+      "sent_at": "2026-03-14T04:31:27.407Z",
+      "status": "sent"
+    },
+    {
+      "id": 1773462687934,
+      "patient_id": "PT-10246",
+      "sent_to": "9876543211",
+      "message": "LifeKey SMS Alert: Priya Sharma admitted to CityCare Medical Centre. Status: Stable. Assigned physician: Dr. Meenakshi Sundaram. Phone: 044-6666-5555. Map: https://maps.google.com/?q=CityCare+Medical+Centre,+Anna+Nagar,+Chennai",
+      "sent_at": "2026-03-14T04:31:27.934Z",
+      "status": "sent"
+    },
+    {
+      "id": 1773462688119,
+      "patient_id": "PT-10246",
+      "sent_to": "9876543211",
+      "message": "LifeKey SMS Alert: Priya Sharma admitted to CityCare Medical Centre. Status: Stable. Assigned physician: Dr. Meenakshi Sundaram. Phone: 044-6666-5555. Map: https://maps.google.com/?q=CityCare+Medical+Centre,+Anna+Nagar,+Chennai",
+      "sent_at": "2026-03-14T04:31:28.119Z",
+      "status": "sent"
+    }
+  ],
+  "status_logs": [
+    {
+      "id": 1,
+      "patient_id": "PT-10245",
+      "admission_id": 1699999999000,
+      "status": "Under Treatment",
+      "changed_at": "2024-03-14T01:00:00.000Z"
+    },
+    {
+      "id": 1773462687383,
+      "patient_id": "PT-10246",
+      "admission_id": 1773462687383,
+      "status": "Under Treatment",
+      "changed_at": "2026-03-14T04:31:27.383Z"
+    },
+    {
+      "id": 1773462687916,
+      "patient_id": "PT-10246",
+      "admission_id": 1773462687916,
+      "status": "Under Treatment",
+      "changed_at": "2026-03-14T04:31:27.916Z"
+    },
+    {
+      "id": 1773462688094,
+      "patient_id": "PT-10246",
+      "admission_id": 1773462688094,
+      "status": "Under Treatment",
+      "changed_at": "2026-03-14T04:31:28.094Z"
+    }
+  ],
+  "treatment_history": [
+    {
+      "id": 1773462734064,
+      "patient_id": "PT-10246",
+      "admitted_at": "2026-03-14T04:32:14.010Z",
+      "discharged_at": "2026-03-14T04:32:14.065Z",
+      "diagnosis": "Updated via Search",
+      "treatment_given": "Standard Protocol",
+      "medications_added": "[]",
+      "new_conditions": "[]",
+      "new_surgeries": "[]",
+      "doctor_id": "DR-001",
+      "notes": "she is cured and have better immune now"
+    }
+  ],
+  "medication_logs": [],
+  "deletion_logs": []
+}

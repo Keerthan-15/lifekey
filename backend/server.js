@@ -1,6 +1,5 @@
 require('dotenv').config();
 const express = require('express');
-const mysql = require('mysql2/promise');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
@@ -14,16 +13,26 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'lifekey_secret_demo';
 
-// Setup DB connection pool
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'lifekey_db',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+// --- JSON Database Setup ---
+const DB_FILE = path.join(__dirname, 'database.json');
+
+const readDB = () => {
+    try {
+        const data = fs.readFileSync(DB_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (e) {
+        console.error("Error reading database.json", e);
+        return {
+            patients: [], doctors: [], active_admissions: [], 
+            status_logs: [], treatment_history: [], medication_logs: [], 
+            emergency_ids: [], notifications: [], deletion_logs: []
+        };
+    }
+};
+
+const writeDB = (data) => {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+};
 
 // Helper for sending responses reliably
 const sendError = (res, err) => {
@@ -48,9 +57,9 @@ const HOSPITAL_MAP = {
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    const [rows] = await pool.query('SELECT * FROM doctors WHERE email = ? AND password = ?', [email, password]);
-    if (rows.length > 0) {
-      const user = rows[0];
+    const db = readDB();
+    const user = db.doctors.find(d => d.email === email && d.password === password);
+    if (user) {
       const token = jwt.sign({ id: user.id, role: user.dept }, JWT_SECRET, { expiresIn: '12h' });
       return res.json({ status: 'success', token, user: { id: user.id, name: user.name, email: user.email, dept: user.dept } });
     }
@@ -64,13 +73,33 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/identify', async (req, res) => {
   const { fingerprint_id } = req.body;
   try {
-    const [patients] = await pool.query('SELECT * FROM patients WHERE fingerprint_id = ?', [fingerprint_id]);
+    const db = readDB();
+    const patientIndex = db.patients.findIndex(p => p.fingerprint_id === fingerprint_id);
     
-    if (patients.length > 0) {
-      const patient = patients[0];
-      const [result] = await pool.query('INSERT INTO active_admissions (patient_id, status) VALUES (?, ?)', [patient.id, 'Under Treatment']);
-      await pool.query('INSERT INTO status_logs (patient_id, admission_id, status) VALUES (?, ?, ?)', [patient.id, result.insertId, 'Under Treatment']);
-      await pool.query('UPDATE patients SET last_status = ? WHERE id = ?', ['Under Treatment', patient.id]);
+    if (patientIndex !== -1) {
+      const patient = db.patients[patientIndex];
+      const admissionId = Date.now();
+      
+      const newAdmission = {
+        id: admissionId,
+        patient_id: patient.id,
+        status: 'Under Treatment',
+        admitted_at: new Date().toISOString(),
+        is_archived: 0
+      };
+      
+      db.active_admissions.push(newAdmission);
+      
+      db.status_logs.push({
+        id: Date.now(),
+        patient_id: patient.id,
+        admission_id: admissionId,
+        status: 'Under Treatment',
+        changed_at: new Date().toISOString()
+      });
+      
+      patient.last_status = 'Under Treatment';
+      writeDB(db);
       return res.json({ status: 'found', patient });
     }
     return res.status(404).json({ status: 'not_found' });
@@ -80,16 +109,32 @@ app.post('/api/identify', async (req, res) => {
 });
 
 app.get('/api/dashboard/live', async (req, res) => {
-  const query = `
-    SELECT p.*, a.id as admission_id, a.admitted_at, a.status as admission_status, 
-      (SELECT JSON_ARRAYAGG(JSON_OBJECT('status', sl.status, 'changed_at', sl.changed_at)) FROM status_logs sl WHERE sl.admission_id = a.id ORDER BY sl.changed_at ASC) as status_timeline
-    FROM active_admissions a
-    JOIN patients p ON a.patient_id = p.id
-    WHERE a.status NOT IN ('Discharged', 'Cured') AND a.is_archived = 0
-    ORDER BY a.admitted_at DESC
-  `;
   try {
-    const [results] = await pool.query(query);
+    const db = readDB();
+    const activeAdmissions = db.active_admissions.filter(a => a.status !== 'Discharged' && a.status !== 'Cured' && a.is_archived === 0);
+    
+    // order by admitted_at DESC
+    activeAdmissions.sort((a, b) => new Date(b.admitted_at) - new Date(a.admitted_at));
+
+    const results = activeAdmissions.map(a => {
+      const patientObj = db.patients.find(p => p.id === a.patient_id) || {};
+      const patient = { ...patientObj };
+      
+      // Add admission data
+      patient.admission_id = a.id;
+      patient.admitted_at = a.admitted_at;
+      patient.admission_status = a.status;
+
+      // Timeline
+      const timeline = db.status_logs
+          .filter(sl => sl.admission_id === a.id)
+          .sort((sl1, sl2) => new Date(sl1.changed_at) - new Date(sl2.changed_at))
+          .map(sl => ({ status: sl.status, changed_at: sl.changed_at }));
+      patient.status_timeline = timeline;
+
+      return patient;
+    });
+
     results.forEach(patient => {
       // Map Geographic hospital data over
       patient.hospital_info = HOSPITAL_MAP[patient.specialty] || HOSPITAL_MAP['Emergency'];
@@ -101,6 +146,7 @@ app.get('/api/dashboard/live', async (req, res) => {
         patient.medications = patient.current_medication;
       }
     });
+
     res.json(results);
   } catch (err) {
     sendError(res, err);
@@ -110,15 +156,18 @@ app.get('/api/dashboard/live', async (req, res) => {
 // --- PATIENT DETAILS & MANAGEMENT ---
 app.get('/api/patient/:id', async (req, res) => {
   try {
-    const [patients] = await pool.query(`
-      SELECT p.*, a.admitted_at 
-      FROM patients p 
-      LEFT JOIN active_admissions a ON p.id = a.patient_id AND a.is_archived = 0 AND a.status NOT IN ('Discharged', 'Cured')
-      WHERE p.id = ?
-    `, [req.params.id]);
-    if (patients.length > 0) {
-      const patient = patients[0];
-      const [history] = await pool.query('SELECT * FROM treatment_history WHERE patient_id = ? ORDER BY admitted_at DESC', [patient.id]);
+    const db = readDB();
+    const patientId = req.params.id;
+    const patientIndex = db.patients.findIndex(p => p.id === patientId);
+    
+    if (patientIndex !== -1) {
+      const patient = { ...db.patients[patientIndex] };
+      const activeAdmission = db.active_admissions.find(a => a.patient_id === patientId && a.is_archived === 0 && !['Discharged', 'Cured'].includes(a.status));
+      if (activeAdmission) {
+        patient.admitted_at = activeAdmission.admitted_at;
+      }
+      
+      const history = db.treatment_history.filter(h => h.patient_id === patientId).sort((a,b) => new Date(b.admitted_at) - new Date(a.admitted_at));
       return res.json({ status: 'success', patient, history });
     }
     return res.status(404).json({ status: 'not_found' });
@@ -129,7 +178,8 @@ app.get('/api/patient/:id', async (req, res) => {
 
 app.get('/api/patient/:id/history', async (req, res) => {
   try {
-    const [history] = await pool.query('SELECT * FROM treatment_history WHERE patient_id = ? ORDER BY admitted_at DESC', [req.params.id]);
+    const db = readDB();
+    const history = db.treatment_history.filter(h => h.patient_id === req.params.id).sort((a,b) => new Date(b.admitted_at) - new Date(a.admitted_at));
     res.json(history);
   } catch (err) {
     sendError(res, err);
@@ -140,9 +190,21 @@ app.put('/api/patient/:id/medications', async (req, res) => {
   const { new_medications_json, old_medications_json, reason, doctor_id } = req.body;
   const patientId = req.params.id;
   try {
-    await pool.query('UPDATE patients SET medications = ? WHERE id = ?', [new_medications_json, patientId]);
-    await pool.query('INSERT INTO medication_logs (patient_id, changed_by, old_medications, new_medications, reason) VALUES (?, ?, ?, ?, ?)', 
-      [patientId, doctor_id, old_medications_json, new_medications_json, reason]);
+    const db = readDB();
+    const patient = db.patients.find(p => p.id === patientId);
+    if (patient) {
+        patient.medications = new_medications_json;
+        db.medication_logs.push({
+            id: Date.now(),
+            patient_id: patientId,
+            changed_by: doctor_id,
+            old_medications: old_medications_json,
+            new_medications: new_medications_json,
+            reason: reason,
+            changed_at: new Date().toISOString()
+        });
+        writeDB(db);
+    }
     res.json({ status: 'success' });
   } catch (err) {
     sendError(res, err);
@@ -153,16 +215,28 @@ app.put('/api/patient/:id/status', async (req, res) => {
   const { status, admission_id } = req.body;
   const patientId = req.params.id;
   try {
+    const db = readDB();
     if (admission_id) {
        if (['Discharged', 'Cured'].includes(status)) {
-          // Explicit cleanup mapping from status change action
-          await pool.query('DELETE FROM active_admissions WHERE id = ?', [admission_id]);
+           // Explicit cleanup mapping from status change action
+           db.active_admissions = db.active_admissions.filter(a => a.id !== admission_id);
        } else {
-          await pool.query('UPDATE active_admissions SET status = ? WHERE id = ?', [status, admission_id]);
-          await pool.query('INSERT INTO status_logs (patient_id, admission_id, status) VALUES (?, ?, ?)', [patientId, admission_id, status]);
+           const admission = db.active_admissions.find(a => a.id === admission_id);
+           if (admission) admission.status = status;
+           
+           db.status_logs.push({
+               id: Date.now(),
+               patient_id: patientId,
+               admission_id: admission_id,
+               status: status,
+               changed_at: new Date().toISOString()
+           });
        }
     }
-    await pool.query('UPDATE patients SET last_status = ? WHERE id = ?', [status, patientId]);
+    const patient = db.patients.find(p => p.id === patientId);
+    if (patient) patient.last_status = status;
+    writeDB(db);
+    
     res.json({ status: 'success' });
   } catch (err) {
     sendError(res, err);
@@ -173,10 +247,13 @@ app.put('/api/patient/:id/notes', async (req, res) => {
   const { notes, admission_id } = req.body;
   const patientId = req.params.id;
   try {
-    if (admission_id) {
+    const db = readDB();
+    const patient = db.patients.find(p => p.id === patientId);
+    if (patient) {
         // Technically update treatment history if it was already discharged, else save to patients
+        patient.discharge_notes = notes;
+        writeDB(db);
     }
-    await pool.query('UPDATE patients SET discharge_notes = ? WHERE id = ?', [notes, patientId]);
     res.json({ status: 'success' });
   } catch (err) {
     sendError(res, err);
@@ -187,63 +264,89 @@ app.post('/api/patient/:id/discharge', async (req, res) => {
   const patientId = req.params.id;
   const { admission_id, diagnosis, treatment_given, medications_added, new_conditions, new_surgeries, doctor_id, notes, admitted_at } = req.body;
   
-  const connection = await pool.getConnection();
   try {
-    await connection.beginTransaction();
+    const db = readDB();
     
-    // 1. Insert into treatment_history
-    await connection.query(`
-      INSERT INTO treatment_history 
-      (patient_id, admitted_at, diagnosis, treatment_given, medications_added, new_conditions, new_surgeries, doctor_id, notes) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [patientId, new Date(admitted_at), diagnosis, treatment_given, JSON.stringify(medications_added), JSON.stringify(new_conditions), JSON.stringify(new_surgeries), doctor_id, notes]);
-
-    // 2. Update patients table
-    await connection.query(`
-      UPDATE patients 
-      SET last_status = 'Discharged', discharge_notes = ? 
-      WHERE id = ?
-    `, [notes, patientId]);
-
-    // 3. Delete from active_admissions
-    if (admission_id) {
-      await connection.query('DELETE FROM active_admissions WHERE id = ?', [admission_id]);
+    db.treatment_history.push({
+        id: Date.now(),
+        patient_id: patientId,
+        admitted_at: new Date(admitted_at).toISOString(),
+        discharged_at: new Date().toISOString(),
+        diagnosis,
+        treatment_given,
+        medications_added: JSON.stringify(medications_added),
+        new_conditions: JSON.stringify(new_conditions),
+        new_surgeries: JSON.stringify(new_surgeries),
+        doctor_id,
+        notes
+    });
+  
+    const patient = db.patients.find(p => p.id === patientId);
+    if (patient) {
+        patient.last_status = 'Discharged';
+        patient.discharge_notes = notes;
     }
-
-    await connection.commit();
+  
+    if (admission_id) {
+        db.active_admissions = db.active_admissions.filter(a => a.id !== admission_id);
+    }
+    
+    writeDB(db);
     res.json({ status: 'success', message: 'Patient discharged successfully' });
   } catch (err) {
-    await connection.rollback();
     sendError(res, err);
-  } finally {
-    connection.release();
   }
 });
 
 // --- EMERGENCY ENTRY & ARCHIVE ---
 app.post('/api/patient/manual', async (req, res) => {
   const { id, name, age, blood_group, allergies, conditions, medications, emergency_contact, contact_name, is_critical, status, admitted_at } = req.body;
-  const connection = await pool.getConnection();
   try {
-    await connection.beginTransaction();
-    const admissionTime = admitted_at ? new Date(admitted_at) : new Date();
-
-    await connection.query(`
-      INSERT INTO patients (id, name, age, blood_group, allergies, conditions, medications, emergency_contact, contact_name, is_critical, last_status, specialty)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'General')
-      ON DUPLICATE KEY UPDATE name=VALUES(name), age=VALUES(age), blood_group=VALUES(blood_group), allergies=VALUES(allergies), conditions=VALUES(conditions), medications=VALUES(medications), emergency_contact=VALUES(emergency_contact), contact_name=VALUES(contact_name), is_critical=VALUES(is_critical), last_status=VALUES(last_status)
-    `, [id, name || 'Unknown Patient', age, blood_group, JSON.stringify(allergies || ["None"]), JSON.stringify(conditions || ["None"]), JSON.stringify(medications || ["None"]), emergency_contact, contact_name, is_critical, status]);
-
-    const [admResult] = await connection.query('INSERT INTO active_admissions (patient_id, status, admitted_at) VALUES (?, ?, ?)', [id, status, admissionTime]);
-    await connection.query('INSERT INTO status_logs (patient_id, admission_id, status) VALUES (?, ?, ?)', [id, admResult.insertId, status]);
-
-    await connection.commit();
+    const db = readDB();
+    const admissionTime = admitted_at ? new Date(admitted_at).toISOString() : new Date().toISOString();
+  
+    let patient = db.patients.find(p => p.id === id);
+    if (patient) {
+        Object.assign(patient, {
+            name: name || 'Unknown Patient', age, blood_group,
+            allergies: JSON.stringify(allergies || ["None"]),
+            conditions: JSON.stringify(conditions || ["None"]),
+            medications: JSON.stringify(medications || ["None"]),
+            emergency_contact, contact_name, is_critical, last_status: status
+        });
+    } else {
+        patient = {
+            id, name: name || 'Unknown Patient', age, blood_group,
+            allergies: JSON.stringify(allergies || ["None"]),
+            conditions: JSON.stringify(conditions || ["None"]),
+            medications: JSON.stringify(medications || ["None"]),
+            emergency_contact, contact_name, is_critical, last_status: status,
+            specialty: 'General'
+        };
+        db.patients.push(patient);
+    }
+  
+    const newAdmission = {
+        id: Date.now(),
+        patient_id: id,
+        status: status,
+        admitted_at: admissionTime,
+        is_archived: 0
+    };
+    db.active_admissions.push(newAdmission);
+  
+    db.status_logs.push({
+        id: Date.now(),
+        patient_id: id,
+        admission_id: newAdmission.id,
+        status: status,
+        changed_at: admissionTime
+    });
+  
+    writeDB(db);
     res.json({ status: 'success', patient_id: id });
   } catch (err) {
-    await connection.rollback();
     sendError(res, err);
-  } finally {
-    connection.release();
   }
 });
 
@@ -251,9 +354,23 @@ app.post('/api/patient/:id/archive', async (req, res) => {
   const { reason, user_id, user_role } = req.body;
   const patientId = req.params.id;
   try {
-    await pool.query('UPDATE active_admissions SET is_archived = 1 WHERE patient_id = ?', [patientId]);
-    await pool.query('UPDATE patients SET is_archived = 1 WHERE id = ?', [patientId]);
-    await pool.query('INSERT INTO deletion_logs (patient_id, user_id, user_role, reason) VALUES (?, ?, ?, ?)', [patientId, user_id || null, user_role || null, reason]);
+    const db = readDB();
+    db.active_admissions.forEach(a => {
+        if (a.patient_id === patientId) a.is_archived = 1;
+    });
+    const patient = db.patients.find(p => p.id === patientId);
+    if (patient) patient.is_archived = 1;
+  
+    db.deletion_logs.push({
+        id: Date.now(),
+        patient_id: patientId,
+        user_id: user_id || null,
+        user_role: user_role || null,
+        reason: reason,
+        archived_at: new Date().toISOString()
+    });
+  
+    writeDB(db);
     res.json({ status: 'success' });
   } catch (err) {
     sendError(res, err);
@@ -358,8 +475,11 @@ app.post('/api/assistant/query', async (req, res) => {
 
     // Sanitization
     const { sanitized, isInjected } = sanitizeInput(query);
+    const db = readDB();
+
     if (isInjected) {
-      await pool.query('INSERT INTO notifications (message, status) VALUES (?, ?)', [`SECURITY ALERT: Injection attempt by ${decoded.id}: ${query.substring(0, 50)}`, 'alert']);
+      db.notifications.push({ id: Date.now(), message: `SECURITY ALERT: Injection attempt by ${decoded.id}: ${query.substring(0, 50)}`, status: 'alert', created_at: new Date().toISOString() });
+      writeDB(db);
       return res.status(400).json({ error: 'Security warning: Query rejected due to injection pattern detection.' });
     }
 
@@ -368,7 +488,8 @@ app.post('/api/assistant/query', async (req, res) => {
 
     // Logging for all queries
     const auditMsg = `Assistant query (${intent.type}) by ${decoded.id}: ${sanitized.substring(0, 100)}`;
-    await pool.query('INSERT INTO notifications (message, status) VALUES (?, ?)', [auditMsg, 'assistant']);
+    db.notifications.push({ id: Date.now(), message: auditMsg, status: 'assistant', created_at: new Date().toISOString() });
+    writeDB(db);
 
     if (intent.type === 'MEDICAL_CEILING') {
       return res.json({ 
@@ -415,10 +536,8 @@ app.post('/api/assistant/query', async (req, res) => {
     // Data Fetching
     let resultData = null;
     if (intent.params.patientId) {
-      const [patients] = await pool.query('SELECT * FROM patients WHERE id = ?', [intent.params.patientId]);
-      if (patients.length > 0) {
-        resultData = patients[0];
-      } else {
+      resultData = db.patients.find(p => p.id === intent.params.patientId);
+      if (!resultData) {
         return res.json({
           title: 'Record Not Found',
           content: `Patient record not found for ID ${intent.params.patientId}. Please verify the patient ID and try again, or use the Search Tab to locate the correct record.`,
@@ -453,12 +572,14 @@ app.post('/api/assistant/query', async (req, res) => {
     } else if (intent.type === 'SUMMARY_QUERY' && resultData) {
       responseText = `Summary for ${resultData.name} (${resultData.id}): Age: ${resultData.age}, Blood: ${resultData.blood_group}, Status: ${resultData.last_status}, Specialty: ${resultData.specialty}.`;
     } else if (intent.type === 'AGGREGATE_QUERY') {
-      const [counts] = await pool.query('SELECT COUNT(*) as total FROM active_admissions WHERE is_archived = 0');
-      responseText = `Currently there are ${counts[0].total} active emergency patients admitted in the dashboard.`;
+      const count = db.active_admissions.filter(a => a.is_archived === 0).length;
+      responseText = `Currently there are ${count} active emergency patients admitted in the dashboard.`;
     } else if (intent.type === 'LIST_FILTER') {
-      let queryStr = 'SELECT p.name, p.id FROM active_admissions a JOIN patients p ON a.patient_id = p.id WHERE a.is_archived = 0';
-      if (intent.params.condition) queryStr += ` AND p.last_status = '${intent.params.condition}'`;
-      const [list] = await pool.query(queryStr);
+      let activeListIds = db.active_admissions.filter(a => a.is_archived === 0).map(a => a.patient_id);
+      let list = db.patients.filter(p => activeListIds.includes(p.id));
+      if (intent.params.condition) {
+          list = list.filter(p => p.last_status === intent.params.condition);
+      }
       responseText = `Found ${list.length} patients with ${intent.params.condition || 'active'} status: ${list.map(p => `${p.name} (${p.id})`).join(', ') || 'None'}`;
     } else {
       responseText = resultData ? `Retrieved record for ${resultData.name} (${resultData.id}).` : 'No patient found with that ID.';
@@ -481,8 +602,14 @@ app.post('/api/assistant/query', async (req, res) => {
 // --- EMERGENCY FALLBACK ---
 app.post('/api/emergency/create', async (req, res) => {
   try {
+    const db = readDB();
     const emergencyId = `EM-${Math.floor(10000 + Math.random() * 90000)}`;
-    await pool.query('INSERT INTO emergency_ids (emergency_id, status) VALUES (?, ?)', [emergencyId, 'active']);
+    db.emergency_ids.push({
+        emergency_id: emergencyId,
+        status: 'active',
+        created_at: new Date().toISOString()
+    });
+    writeDB(db);
     return res.json({ emergency_id: emergencyId });
   } catch (err) {
     sendError(res, err);
@@ -493,7 +620,12 @@ app.put('/api/emergency/:id/link', async (req, res) => {
   const { linked_to } = req.body;
   const emergencyId = req.params.id;
   try {
-    await pool.query("UPDATE emergency_ids SET linked_to = ? WHERE emergency_id = ?", [linked_to, emergencyId]);
+    const db = readDB();
+    const record = db.emergency_ids.find(e => e.emergency_id === emergencyId);
+    if (record) {
+        record.linked_to = linked_to;
+        writeDB(db);
+    }
     return res.json({ status: 'success', linked: true });
   } catch (err) {
     sendError(res, err);
@@ -504,12 +636,20 @@ app.put('/api/emergency/:id/link', async (req, res) => {
 app.post('/api/notify', async (req, res) => {
   const { patient_id, sent_to } = req.body; // Ignore frontend generic message
   try {
-    const [patientRows] = await pool.query('SELECT name, is_critical, specialty FROM patients WHERE id = ?', [patient_id]);
-    if (patientRows.length > 0) {
-       const pt = patientRows[0];
+    const db = readDB();
+    const pt = db.patients.find(p => p.id === patient_id);
+    if (pt) {
        const hosp = HOSPITAL_MAP[pt.specialty] || HOSPITAL_MAP['Emergency'];
        const finalMsg = `LifeKey SMS Alert: ${pt.name} admitted to ${hosp.name}. Status: ${pt.is_critical ? 'CRITICAL' : 'Stable'}. Assigned physician: ${hosp.doctor}. Phone: ${hosp.phone}. Map: ${hosp.maps}`;
-       await pool.query('INSERT INTO notifications (patient_id, sent_to, message) VALUES (?, ?, ?)', [patient_id, sent_to, finalMsg]);
+       db.notifications.push({
+           id: Date.now(),
+           patient_id: patient_id,
+           sent_to: sent_to,
+           message: finalMsg,
+           sent_at: new Date().toISOString(),
+           status: 'sent'
+       });
+       writeDB(db);
        return res.json({ status: 'sent', logged: true, generated_message: finalMsg });
     }
     return res.status(404).json({ error: 'Patient not found' });
@@ -522,9 +662,9 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, async () => {
   console.log(`LifeKey Backend running on port ${PORT}`);
   try {
-    await pool.query('SELECT 1');
-    console.log('✅ MySQL Database Connected');
+    readDB();
+    console.log('✅ JSON Database Connected');
   } catch (e) {
-    console.error('❌ Failed to connect to MySQL:', e.message);
+    console.error('❌ Failed to connect to JSON Database:', e.message);
   }
 });
