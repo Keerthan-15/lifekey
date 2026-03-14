@@ -13,6 +13,10 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'lifekey_secret_demo';
 
+// Serve frontend static files
+const frontendPath = path.join(__dirname, '../frontend/dist');
+app.use(express.static(frontendPath));
+
 // --- JSON Database Setup ---
 const DB_FILE = path.join(__dirname, 'database.json');
 
@@ -655,6 +659,13 @@ app.post('/api/notify', async (req, res) => {
     return res.status(404).json({ error: 'Patient not found' });
   } catch (err) {
     sendError(res, err);
+  }
+});
+
+// Catch-all route to serve the frontend for any non-API requests
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(frontendPath, 'index.html'));
   }
 });
 
